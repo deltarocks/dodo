@@ -35,8 +35,9 @@ use std::mem;
 use std::os::windows::prelude::*;
 use std::ptr;
 
-use rand::RngCore;
-use rand::rngs::OsRng;
+use rand::Rng;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
 use windows_sys::Win32::Foundation::BOOL;
 use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
 use windows_sys::Win32::Foundation::ERROR_BROKEN_PIPE;
@@ -250,7 +251,7 @@ pub fn anon_pipe(
 }
 
 fn pipe_name(process_id: u32) -> String {
-  let mut rng = OsRng;
+  let mut rng = UnwrapErr(SysRng);
   format!(
     r"\\.\pipe\__rust_anonymous_pipe1__.{}.{:016x}{:016x}",
     process_id,
