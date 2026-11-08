@@ -239,21 +239,6 @@ impl<'a> BytesAppendable<'a> for &'a SpecifierStoreForSerialization<'a> {
   }
 }
 
-/// Given a canonical npm package folder (e.g.
-/// `<.deno>/<id>/node_modules/@scope/name`), walk up to the enclosing
-/// `node_modules/` directory. Embedding from there picks up sibling
-/// symlinks the deno linker creates for direct dependencies, which the
-/// canonical folder itself doesn't contain.
-fn pkg_folder_node_modules_root(folder: &Path) -> Option<&Path> {
-  let mut current = folder.parent()?;
-  loop {
-    if current.file_name() == Some(std::ffi::OsStr::new("node_modules")) {
-      return Some(current);
-    }
-    current = current.parent()?;
-  }
-}
-
 pub fn is_standalone_binary(exe_path: &Path) -> bool {
   let Ok(data) = std::fs::read(exe_path) else {
     return false;
@@ -829,7 +814,7 @@ impl<'a> DenoCompileBinaryWriter<'a> {
         asset_module_urls.swap_remove(module.specifier());
         let maybe_cjs_export_analysis = maybe_cjs_analysis
           .as_ref()
-          .map(bincode::serialize)
+          .map(serde_json::to_vec)
           .transpose()?;
         if module.specifier().scheme() == "file" {
           let file_path = deno_path_util::url_to_file_path(module.specifier())?;
@@ -1002,7 +987,7 @@ impl<'a> DenoCompileBinaryWriter<'a> {
             CjsExportAnalysisEntry::Error(err.to_string())
           }
         };
-        to_add.push((file_path, bincode::serialize(&analysis)?));
+        to_add.push((file_path, serde_json::to_vec(&analysis)?));
       }
     }
     for (file_path, analysis) in to_add {
@@ -1367,20 +1352,16 @@ impl<'a> DenoCompileBinaryWriter<'a> {
         // from the canonical folder picks both up so node-module resolution at
         // runtime can follow the symlink chain (e.g. the NAPI-RS
         // platform-specific sibling package).
-        let mut embedded_roots: std::collections::HashSet<PathBuf> =
-          std::collections::HashSet::new();
         let mut done: u64 = 0;
         for id in &needed_ids {
           if let Ok(folder) = managed.resolve_pkg_folder_from_pkg_id(id)
             && folder.exists()
           {
-            let root_to_add =
-              pkg_folder_node_modules_root(&folder).unwrap_or(folder.as_path());
-            if embedded_roots.insert(root_to_add.to_path_buf()) {
-              builder.add_dir_recursive(root_to_add).with_context(|| {
-                format!("Embedding npm package at '{}'", root_to_add.display())
+            builder
+              .add_npm_package_dir_recursive(&folder)
+              .with_context(|| {
+                format!("Embedding npm package at '{}'", folder.display())
               })?;
-            }
           }
           done += 1;
           progress.set_position(done);
@@ -1477,7 +1458,7 @@ impl<'a> DenoCompileBinaryWriter<'a> {
               continue;
             }
             if path.ends_with("node_modules") {
-              builder.add_dir_recursive(&path)?;
+              builder.add_node_modules_dir_recursive(&path)?;
             } else {
               pending_dirs.push_back(path);
             }
